@@ -6,21 +6,30 @@ const destroy_arg = "destroy me";
 
 const Closure = @This();
 
-ptr: *anyopaque,
+ptr: ?*anyopaque,
 pfunc: *const fn (*anyopaque, ?[*]const u8) void,
 
 pub fn init(ally: std.mem.Allocator, TFunc: type, up_values: anytype) Closure {
     return ClosureType(@TypeOf(TFunc.func)).init(ally, TFunc.func, up_values);
 }
 
+pub fn make(TFunc: type, p_upvalue: anytype) Closure {
+    if (@TypeOf(p_upvalue) == @TypeOf(null) or @TypeOf(p_upvalue) == @TypeOf(.{})) {
+        return .{ .ptr = null, .pfunc = StackClosureCaller(TFunc).func };
+    } else {
+        if (@typeInfo(@TypeOf(p_upvalue)) != .Pointer) @compileError("upvalue for make() must be pointer.");
+        return .{ .ptr = @ptrCast(@constCast(p_upvalue)), .pfunc = StackClosureCaller(TFunc).func };
+    }
+}
+
 pub fn call(self: Closure, arg: anytype) void {
     const TArg = @TypeOf(arg);
     if (TArg == @TypeOf(.{}) or TArg == @TypeOf(null)) {
-        self.pfunc(self.ptr, null);
+        self.pfunc(self.ptr.?, null);
     } else {
         if (isComptimeTypeTuple(TArg)) @compileError("must use Closure.callTyped() if the arg has any comptime field.");
         const buf: [*]const u8 = @ptrCast(@alignCast(&arg));
-        self.pfunc(self.ptr, buf);
+        self.pfunc(self.ptr.?, buf);
     }
 }
 
@@ -29,7 +38,7 @@ pub fn callTyped(self: Closure, comptime T: type, arg: T) void {
 }
 
 pub fn deinit(self: Closure) void {
-    self.pfunc(self.ptr, destroy_arg.ptr);
+    self.pfunc(self.ptr.?, destroy_arg.ptr);
 }
 
 pub fn ArgType(comptime types: anytype) type {
@@ -73,6 +82,53 @@ inline fn isComptimeTypeTuple(comptime T: type) bool {
         if (field.is_comptime) return true;
     }
     return false;
+}
+
+fn StackClosureCaller(comptime TFuncStruct: type) type {
+    const TFunc = @TypeOf(TFuncStruct.func);
+    const TUpValue = FuncUpValueTuple(TFunc);
+    const has_arg = FuncArgType(TFunc) != void;
+    if (has_arg) {
+        return t: {
+            if (TUpValue == @TypeOf(.{})) break :t struct {
+                pub fn func(_: ?*anyopaque, arg: ?[*]const u8) void {
+                    if (arg) |p| {
+                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
+                    }
+                    const real_arg: *FuncArgType(TFunc) = @ptrCast(@alignCast(@constCast(arg.?)));
+                    @call(.auto, TFuncStruct.func, .{real_arg.*});
+                }
+            } else break :t struct {
+                pub fn func(p_upvalue: ?*anyopaque, arg: ?[*]const u8) void {
+                    if (arg) |p| {
+                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
+                    }
+                    const real_arg: *FuncArgType(TFunc) = @ptrCast(@alignCast(@constCast(arg.?)));
+                    const upvalue: *TUpValue = @ptrCast(@alignCast(@constCast(p_upvalue.?)));
+                    @call(.auto, TFuncStruct.func, .{real_arg.*} ++ upvalue.*);
+                }
+            };
+        };
+    } else {
+        return t: {
+            if (TUpValue == @TypeOf(.{})) break :t struct {
+                pub fn func(_: ?*anyopaque, arg: ?[*]const u8) void {
+                    if (arg) |p| {
+                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
+                    }
+                    @call(.auto, TFuncStruct.func, .{});
+                }
+            } else break :t struct {
+                pub fn func(p_upvalue: ?*anyopaque, arg: ?[*]const u8) void {
+                    if (arg) |p| {
+                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
+                    }
+                    const upvalue: *TUpValue = @ptrCast(@alignCast(@constCast(p_upvalue.?)));
+                    @call(.auto, TFuncStruct.func, upvalue.*);
+                }
+            };
+        };
+    }
 }
 
 fn FuncArgType(comptime TFunc: type) type {
@@ -270,4 +326,25 @@ test "closure" {
     clo.call(.{ &a, &b });
     clo.deinit();
     try t.expect(a == 5 and b == 6);
+
+    //test stack upvalue
+    clo = Closure.make(struct {
+        pub fn func(pa: *i32, pb: *i64) void {
+            pa.* = 7;
+            pb.* = 8;
+        }
+    }, &.{ &a, &b });
+    clo.call(null);
+    try t.expect(a == 7 and b == 8);
+
+    //test stack upvalue with call arg
+    clo = Closure.make(struct {
+        pub fn func(arg: ArgType(.{ *i32, *i64 }), va: i32, vb: i64) void {
+            const pa, const pb = arg;
+            pa.* = va;
+            pb.* = vb;
+        }
+    }, &ArgType(.{ i32, i64 }){ 9, 10 });
+    clo.call(.{ &a, &b });
+    try t.expect(a == 9 and b == 10);
 }
