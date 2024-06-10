@@ -35,9 +35,9 @@ try t.expect(a == 1);
     clo.deinit();
     try t.expect(a == 5 and b == 6);
 ```
-## Example: stack up value
+## Example: up value on stack
 ```zig
-    //test stack upvalue with call arg
+    //test upvalue on stack with call arg
     //Note: don't need to call clo.deinit() here, but it's safe to call and it's just do nothing.
     clo = Closure.make(struct {
         pub fn func(arg: ArgType(.{ *i32, *i64 }), va: i32, vb: i64) void {
