@@ -7,7 +7,7 @@ const destroy_arg = "destroy me";
 const Closure = @This();
 
 ptr: ?*anyopaque,
-pfunc: *const fn (*anyopaque, ?[*]const u8) void,
+pfunc: *const fn (?*anyopaque, ?[*]const u8) void,
 
 pub fn init(ally: std.mem.Allocator, TFunc: type, up_values: anytype) Closure {
     return ClosureType(@TypeOf(TFunc.func)).init(ally, TFunc.func, up_values);
@@ -25,11 +25,11 @@ pub fn make(TFunc: type, p_upvalue: anytype) Closure {
 pub fn call(self: Closure, arg: anytype) void {
     const TArg = @TypeOf(arg);
     if (TArg == @TypeOf(.{}) or TArg == @TypeOf(null)) {
-        self.pfunc(self.ptr.?, null);
+        self.pfunc(self.ptr, null);
     } else {
         if (isComptimeTypeTuple(TArg)) @compileError("must use Closure.callTyped() if the arg has any comptime field.");
         const buf: [*]const u8 = @ptrCast(@alignCast(&arg));
-        self.pfunc(self.ptr.?, buf);
+        self.pfunc(self.ptr, buf);
     }
 }
 
@@ -38,7 +38,7 @@ pub fn callTyped(self: Closure, comptime T: type, arg: T) void {
 }
 
 pub fn deinit(self: Closure) void {
-    self.pfunc(self.ptr.?, destroy_arg.ptr);
+    self.pfunc(self.ptr, destroy_arg.ptr);
 }
 
 pub fn ArgType(comptime types: anytype) type {
@@ -347,4 +347,13 @@ test "closure" {
     }, &ArgType(.{ i32, i64 }){ 9, 10 });
     clo.call(.{ &a, &b });
     try t.expect(a == 9 and b == 10);
+
+    //test stack upvalue with upvalue == null
+    clo = Closure.make(struct {
+        pub fn func(arg: ArgType(.{*i32})) void {
+            arg[0].* = 11;
+        }
+    }, &.{});
+    clo.call(.{&a});
+    try t.expect(a == 11);
 }
