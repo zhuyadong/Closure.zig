@@ -26,7 +26,7 @@ try t.expect(a == 1);
     // note:arg must be the first parameter and the type must be calculated with ArgType.
     //      parameter[1..] for upvalue (5 => va, 6 => vb).
     clo = Closure.init(t.allocator, struct {
-        pub fn func(arg: ArgType(.{ *i32, *i64 }), va: i32, vb: i64) void {
+        pub fn func(arg: std.meta.Tuple(&.{ *i32, *i64 }), va: i32, vb: i64) void {
             arg[0].* = va;
             arg[1].* = vb;
         }
@@ -40,7 +40,7 @@ try t.expect(a == 1);
     //test upvalue on stack with call arg
     //Note: don't need to call clo.deinit() here, but it's safe to call and it's just do nothing.
     clo = Closure.make(struct {
-        pub fn func(arg: ArgType(.{ *i32, *i64 }), va: i32, vb: i64) void {
+        pub fn func(arg: std.meta.Tuple(&.{ *i32, *i64 }), va: i32, vb: i64) void {
             const pa, const pb = arg;
             pa.* = va;
             pb.* = vb;
