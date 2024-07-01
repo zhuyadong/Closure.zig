@@ -1,4 +1,5 @@
 const std = @import("std");
+const Tuple = std.meta.Tuple;
 const StructField = std.builtin.Type.StructField;
 
 // call with this arg means deinit.
@@ -39,27 +40,6 @@ pub fn callTyped(self: Closure, comptime T: type, arg: T) void {
 
 pub fn deinit(self: Closure) void {
     self.pfunc(self.ptr, destroy_arg.ptr);
-}
-
-pub fn ArgType(comptime types: anytype) type {
-    if (@TypeOf(types) == @TypeOf(.{})) return @TypeOf(.{});
-    comptime var fields: [typesLen(types)]StructField = undefined;
-    inline for (types, 0..) |t, i| {
-        fields[i] = .{
-            .name = std.fmt.comptimePrint("{}", .{i}),
-            .type = t,
-            .default_value = null,
-            .is_comptime = false,
-            .alignment = @alignOf(t),
-        };
-    }
-
-    return @Type(.{ .Struct = .{
-        .layout = .auto,
-        .fields = fields[0..],
-        .decls = &.{},
-        .is_tuple = true,
-    } });
 }
 
 inline fn isTypeTuple(comptime T: type) bool {
@@ -295,11 +275,11 @@ test "closure" {
     // .{ &b, 2 } for: &b => arg[0], 2 => arg[1]
     // note: because 2 is comptime value, so we need use callTyped() here.
     clo = Closure.init(t.allocator, struct {
-        pub fn func(arg: ArgType(.{ *i64, i64 })) void {
+        pub fn func(arg: Tuple(&.{ *i64, i64 })) void {
             arg[0].* = arg[1];
         }
     }, .{});
-    clo.callTyped(ArgType(.{ *i64, i64 }), .{ &b, 2 });
+    clo.callTyped(Tuple(&.{ *i64, i64 }), .{ &b, 2 });
     clo.deinit();
     try t.expect(b == 2);
 
@@ -307,18 +287,18 @@ test "closure" {
     // note:arg must be the first parameter and the type must be calculated with ArgType.
     //      parameter[1..] for upvalue (&a => pa, &b => pb).
     clo = Closure.init(t.allocator, struct {
-        pub fn func(arg: ArgType(.{ i32, i64 }), pa: *i32, pb: *i64) void {
+        pub fn func(arg: Tuple(&.{ i32, i64 }), pa: *i32, pb: *i64) void {
             pa.* = arg[0];
             pb.* = arg[1];
         }
     }, .{ &a, &b });
-    clo.callTyped(ArgType(.{ i32, i64 }), .{ 3, 4 });
+    clo.callTyped(Tuple(&.{ i32, i64 }), .{ 3, 4 });
     clo.deinit();
     try t.expect(a == 3 and b == 4);
 
     // test no comptime arg call.
     clo = Closure.init(t.allocator, struct {
-        pub fn func(arg: ArgType(.{ *i32, *i64 }), va: i32, vb: i64) void {
+        pub fn func(arg: Tuple(&.{ *i32, *i64 }), va: i32, vb: i64) void {
             arg[0].* = va;
             arg[1].* = vb;
         }
@@ -339,18 +319,18 @@ test "closure" {
 
     //test stack upvalue with call arg
     clo = Closure.make(struct {
-        pub fn func(arg: ArgType(.{ *i32, *i64 }), va: i32, vb: i64) void {
+        pub fn func(arg: Tuple(&.{ *i32, *i64 }), va: i32, vb: i64) void {
             const pa, const pb = arg;
             pa.* = va;
             pb.* = vb;
         }
-    }, &ArgType(.{ i32, i64 }){ 9, 10 });
+    }, &Tuple(&.{ i32, i64 }){ 9, 10 });
     clo.call(.{ &a, &b });
     try t.expect(a == 9 and b == 10);
 
     //test stack upvalue with upvalue == null
     clo = Closure.make(struct {
-        pub fn func(arg: ArgType(.{*i32})) void {
+        pub fn func(arg: Tuple(&.{*i32})) void {
             arg[0].* = 11;
         }
     }, &.{});
