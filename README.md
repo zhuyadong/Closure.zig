@@ -45,7 +45,7 @@ try t.expect(a == 1);
             pa.* = va;
             pb.* = vb;
         }
-    }, &ArgType(.{ i32, i64 }){ 9, 10 });
+    }, &std.meta.Tuple(&.{ i32, i64 }){ 9, 10 });
     clo.call(.{ &a, &b });
     try t.expect(a == 9 and b == 10);
 ```
