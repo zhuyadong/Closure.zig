@@ -23,7 +23,7 @@ try t.expect(a == 1);
 
     var a: i32 = 0;
     var b: i64 = 0;
-    // note:arg must be the first parameter and the type must be calculated with ArgType.
+    // note:arg must be the first parameter and the type must be std.meta.Tuple.
     //      parameter[1..] for upvalue (5 => va, 6 => vb).
     clo = Closure.init(t.allocator, struct {
         pub fn func(arg: std.meta.Tuple(&.{ *i32, *i64 }), va: i32, vb: i64) void {
