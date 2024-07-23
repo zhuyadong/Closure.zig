@@ -11,7 +11,7 @@ ptr: ?*anyopaque,
 pfunc: *const fn (?*anyopaque, ?[*]const u8) void,
 
 pub fn init(ally: std.mem.Allocator, TFunc: type, up_values: anytype) Closure {
-    return ClosureType(@TypeOf(TFunc.func)).init(ally, TFunc.func, up_values);
+    return ClosureType(@TypeOf(TFunc.func), @TypeOf(up_values)).init(ally, TFunc.func, up_values);
 }
 
 pub fn make(TFunc: type, p_upvalue: anytype) Closure {
@@ -195,8 +195,7 @@ fn Invoker(comptime Caller: type) type {
     }
 }
 
-fn ClosureType(comptime TFunc: type) type {
-    const TUpValue = FuncUpValueTuple(TFunc);
+fn ClosureType(comptime TFunc: type, comptime TUpValue: type) type {
     const Caller = t: {
         if (TUpValue == @TypeOf(.{})) break :t struct {
             func: *const TFunc,
