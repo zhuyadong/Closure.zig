@@ -16,10 +16,10 @@ pub fn init(ally: std.mem.Allocator, TFunc: type, up_values: anytype) Closure {
 
 pub fn make(TFunc: type, p_upvalue: anytype) Closure {
     if (@TypeOf(p_upvalue) == @TypeOf(null) or @TypeOf(p_upvalue) == @TypeOf(.{})) {
-        return .{ .ptr = null, .pfunc = StackClosureCaller(TFunc).func };
+        return .{ .ptr = null, .pfunc = StackClosureCaller(TFunc, @TypeOf(.{})).func };
     } else {
         if (@typeInfo(@TypeOf(p_upvalue)) != .Pointer) @compileError("upvalue for make() must be pointer.");
-        return .{ .ptr = @ptrCast(@constCast(p_upvalue)), .pfunc = StackClosureCaller(TFunc).func };
+        return .{ .ptr = @ptrCast(@constCast(p_upvalue)), .pfunc = StackClosureCaller(TFunc, @TypeOf(p_upvalue.*)).func };
     }
 }
 
@@ -64,9 +64,8 @@ inline fn isComptimeTypeTuple(comptime T: type) bool {
     return false;
 }
 
-fn StackClosureCaller(comptime TFuncStruct: type) type {
+fn StackClosureCaller(comptime TFuncStruct: type, comptime TUpValue: type) type {
     const TFunc = @TypeOf(TFuncStruct.func);
-    const TUpValue = FuncUpValueTuple(TFunc);
     const has_arg = FuncArgType(TFunc) != void;
     if (has_arg) {
         return t: {
@@ -103,7 +102,7 @@ fn StackClosureCaller(comptime TFuncStruct: type) type {
                     if (arg) |p| {
                         if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
                     }
-                    const upvalue: *TUpValue = @ptrCast(@alignCast(@constCast(p_upvalue.?)));
+                    const upvalue: *TUpValue = @ptrCast(@alignCast(p_upvalue.?));
                     @call(.auto, TFuncStruct.func, upvalue.*);
                 }
             };
@@ -336,4 +335,15 @@ test "closure" {
     }, &.{});
     clo.call(.{&a});
     try t.expect(a == 11);
+
+    clo = Closure.make(struct {
+        pub fn func(out: *i32, nums: []const i32) void {
+            out.* = 0;
+            for (nums) |n| {
+                out.* += n;
+            }
+        }
+    }, &.{ &a, &.{ 1, 2, 3, 4, 5 } });
+    clo.call(null);
+    try t.expect(a == 1 + 2 + 3 + 4 + 5);
 }
