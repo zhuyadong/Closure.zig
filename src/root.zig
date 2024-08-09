@@ -10,6 +10,14 @@ const Closure = @This();
 ptr: ?*anyopaque,
 pfunc: *const fn (?*anyopaque, ?[*]const u8) void,
 
+/// Helping to declare closure parameter types simply does the only thing that makes the code readable
+/// example:
+/// var clo: Closure.Of(.{.arg = .{.name = []const u8, .index = i32, .ret = *bool}),
+pub fn Of(args_declare: anytype) type {
+    _ = args_declare;
+    return Closure;
+}
+
 pub fn init(ally: std.mem.Allocator, TFunc: type, up_values: anytype) Closure {
     return ClosureType(@TypeOf(TFunc.func), @TypeOf(up_values)).init(ally, TFunc.func, up_values);
 }

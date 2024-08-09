@@ -49,4 +49,11 @@ try t.expect(a == 1);
     clo.call(.{ &a, &b });
     try t.expect(a == 9 and b == 10);
 ```
+## Example: Make the parameters of the closure clearly readable
+```zig
+const Data = struct {
+    clo: Closure.Of(.{.arg = .{.name = []const u8, .ret = *bool}}),
+};
+try std.testing.expect(@TypeOf(Data.clo) == Closure);
+```
 More examples in source code: [here](src/root.zig) 
