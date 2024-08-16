@@ -18,16 +18,16 @@ pub fn Of(args_declare: anytype) type {
     return Closure;
 }
 
-pub fn init(ally: std.mem.Allocator, TFunc: type, up_values: anytype) Closure {
-    return ClosureType(@TypeOf(TFunc.func), @TypeOf(up_values)).init(ally, TFunc.func, up_values);
+pub fn init(ally: std.mem.Allocator, func_or_struct: anytype, up_values: anytype) Closure {
+    return ClosureType(FuncType(func_or_struct), @TypeOf(up_values)).init(ally, funcValue(func_or_struct), up_values);
 }
 
-pub fn make(TFunc: type, p_upvalue: anytype) Closure {
+pub fn make(func_or_struct: anytype, p_upvalue: anytype) Closure {
     if (@TypeOf(p_upvalue) == @TypeOf(null) or @TypeOf(p_upvalue) == @TypeOf(.{})) {
-        return .{ .ptr = null, .pfunc = StackClosureCaller(TFunc, @TypeOf(.{})).func };
+        return .{ .ptr = null, .pfunc = StackClosureCaller(funcValue(func_or_struct), @TypeOf(.{})).func };
     } else {
         if (@typeInfo(@TypeOf(p_upvalue)) != .Pointer) @compileError("upvalue for make() must be pointer.");
-        return .{ .ptr = @ptrCast(@constCast(p_upvalue)), .pfunc = StackClosureCaller(TFunc, @TypeOf(p_upvalue.*)).func };
+        return .{ .ptr = @ptrCast(@constCast(p_upvalue)), .pfunc = StackClosureCaller(funcValue(func_or_struct), @TypeOf(p_upvalue.*)).func };
     }
 }
 
@@ -48,6 +48,40 @@ pub fn callTyped(self: Closure, comptime T: type, arg: T) void {
 
 pub fn deinit(self: Closure) void {
     self.pfunc(self.ptr, destroy_arg.ptr);
+}
+
+fn FuncType(any: anytype) type {
+    const T = @TypeOf(any);
+    comptime var ret: type = void;
+    comptime var err: []const u8 = "";
+    const typeinfo = if (T == type) @typeInfo(any) else @typeInfo(T);
+    switch (typeinfo) {
+        .Struct => |info| {
+            if (info.decls.len != 1) {
+                err = "expect struct with just one function.";
+            } else {
+                const field = @field(any, info.decls[0].name);
+                if (@typeInfo(@TypeOf(field)) != .Fn) {
+                    err = std.fmt.comptimePrint("{s}.{s} is not a function.", .{ @typeName(T), info.decls[0].name });
+                } else {
+                    ret = @TypeOf(field);
+                }
+            }
+        },
+        .Fn => ret = T,
+        else => err = "expect struct or function but got " ++ @typeName(T),
+    }
+    if (ret == void) @compileError(err) else return ret;
+}
+
+fn funcValue(any: anytype) FuncType(any) {
+    comptime {
+        switch (@typeInfo(@TypeOf(any))) {
+            .Fn => return any,
+            .Type => return @field(any, @typeInfo(any).Struct.decls[0].name),
+            else => {},
+        }
+    }
 }
 
 inline fn isTypeTuple(comptime T: type) bool {
@@ -72,8 +106,8 @@ inline fn isComptimeTypeTuple(comptime T: type) bool {
     return false;
 }
 
-fn StackClosureCaller(comptime TFuncStruct: type, comptime TUpValue: type) type {
-    const TFunc = @TypeOf(TFuncStruct.func);
+fn StackClosureCaller(function: anytype, comptime TUpValue: type) type {
+    const TFunc = FuncType(function);
     const has_arg = FuncArgType(TFunc) != void;
     if (has_arg) {
         return t: {
@@ -83,7 +117,7 @@ fn StackClosureCaller(comptime TFuncStruct: type, comptime TUpValue: type) type 
                         if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
                     }
                     const real_arg: *FuncArgType(TFunc) = @ptrCast(@alignCast(@constCast(arg.?)));
-                    @call(.auto, TFuncStruct.func, .{real_arg.*});
+                    @call(.auto, function, .{real_arg.*});
                 }
             } else break :t struct {
                 pub fn func(p_upvalue: ?*anyopaque, arg: ?[*]const u8) void {
@@ -92,7 +126,7 @@ fn StackClosureCaller(comptime TFuncStruct: type, comptime TUpValue: type) type 
                     }
                     const real_arg: *FuncArgType(TFunc) = @ptrCast(@alignCast(@constCast(arg.?)));
                     const upvalue: *TUpValue = @ptrCast(@alignCast(@constCast(p_upvalue.?)));
-                    @call(.auto, TFuncStruct.func, .{real_arg.*} ++ upvalue.*);
+                    @call(.auto, function, .{real_arg.*} ++ upvalue.*);
                 }
             };
         };
@@ -103,7 +137,7 @@ fn StackClosureCaller(comptime TFuncStruct: type, comptime TUpValue: type) type 
                     if (arg) |p| {
                         if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
                     }
-                    @call(.auto, TFuncStruct.func, .{});
+                    @call(.auto, function, .{});
                 }
             } else break :t struct {
                 pub fn func(p_upvalue: ?*anyopaque, arg: ?[*]const u8) void {
@@ -111,7 +145,7 @@ fn StackClosureCaller(comptime TFuncStruct: type, comptime TUpValue: type) type 
                         if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
                     }
                     const upvalue: *TUpValue = @ptrCast(@alignCast(p_upvalue.?));
-                    @call(.auto, TFuncStruct.func, upvalue.*);
+                    @call(.auto, function, upvalue.*);
                 }
             };
         };
@@ -353,4 +387,16 @@ test "closure" {
     }, &.{ &a, &.{ 1, 2, 3, 4, 5 } });
     clo.call(null);
     try t.expect(a == 1 + 2 + 3 + 4 + 5);
+
+    a = 0;
+    clo = Closure.make(rawfunc, &.{ &a, &.{ 1, 2, 3, 4, 5 } });
+    clo.call(null);
+    try t.expect(a == 1 + 2 + 3 + 4 + 5);
+}
+
+fn rawfunc(out: *i32, nums: []const i32) void {
+    out.* = 0;
+    for (nums) |n| {
+        out.* += n;
+    }
 }
