@@ -52,7 +52,7 @@ try t.expect(a == 1);
 ## Example: Make the parameters of the closure clearly readable
 ```zig
 const Data = struct {
-    clo: Closure.Of(fn (arg: std.meta.Tuple(&.{ i32, i64 }), ret: *bool) void),
+    clo: Closure.Of(.{.arg32 = i32, .arg64 = i64, .ret = *i64}),
 };
 try std.testing.expect(@TypeOf(Data.clo) == Closure);
 ```
