@@ -462,6 +462,26 @@ test "closure" {
     clo = Closure.make(rawfunc, &.{ &a, &.{ 1, 2, 3, 4, 5 } });
     clo.call(null);
     try t.expect(a == 1 + 2 + 3 + 4 + 5);
+
+    // invoke
+    a = 0;
+    clo = Closure.make(struct {
+        pub fn func(arg: Tuple(&.{*i32})) bool {
+            arg[0].* = 11;
+            return false;
+        }
+    }, &.{});
+    try t.expect(clo.invoke(.{&a}) == false);
+    try t.expect(a == 11);
+
+    a = 0;
+    clo = Closure.make(struct {
+        pub fn func(arg: Tuple(&.{*i32})) void {
+            arg[0].* = 11;
+        }
+    }, &.{});
+    try t.expect(clo.invoke(.{&a}) == true);
+    try t.expect(a == 11);
 }
 
 fn rawfunc(out: *i32, nums: []const i32) void {

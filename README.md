@@ -49,6 +49,28 @@ try t.expect(a == 1);
     clo.call(.{ &a, &b });
     try t.expect(a == 9 and b == 10);
 ```
+## Example: use invoke for return bool
+```zig
+    a = 0;
+    clo = Closure.make(struct {
+        pub fn func(arg: Tuple(&.{*i32})) bool {
+            arg[0].* = 11;
+            return false;
+        }
+    }, &.{});
+    try t.expect(clo.invoke(.{&a}) == false);
+    try t.expect(a == 11);
+
+    clo = Closure.make(struct {
+        pub fn func(arg: Tuple(&.{*i32})) void {
+            arg[0].* = 11;
+        }
+    }, &.{});
+    // invoke on void return function always return true
+    try t.expect(clo.invoke(.{&a}) == true);
+    try t.expect(a == 11);
+```
+
 ## Example: Make the parameters of the closure clearly readable
 ```zig
 const Data = struct {
