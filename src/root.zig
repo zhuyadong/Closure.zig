@@ -8,7 +8,7 @@ const destroy_arg = "destroy me";
 const Closure = @This();
 
 ptr: ?*anyopaque,
-pfunc: *const fn (?*anyopaque, ?[*]const u8) void,
+pfunc: *const fn (?*anyopaque, ?[*]const u8) bool,
 
 /// Helping to declare closure parameter types simply does the only thing that makes the code readable
 /// example:
@@ -31,23 +31,31 @@ pub fn make(func_or_struct: anytype, p_upvalue: anytype) Closure {
     }
 }
 
-pub fn call(self: Closure, arg: anytype) void {
+pub fn invoke(self: Closure, arg: anytype) bool {
     const TArg = @TypeOf(arg);
     if (TArg == @TypeOf(.{}) or TArg == @TypeOf(null)) {
-        self.pfunc(self.ptr, null);
+        return self.pfunc(self.ptr, null);
     } else {
         if (isComptimeTypeTuple(TArg)) @compileError("must use Closure.callTyped() if the arg has any comptime field.");
         const buf: [*]const u8 = @ptrCast(@alignCast(&arg));
-        self.pfunc(self.ptr, buf);
+        return self.pfunc(self.ptr, buf);
     }
 }
 
+pub fn invokeTyped(self: Closure, comptime T: type, arg: T) bool {
+    return self.invoke(arg);
+}
+
+pub fn call(self: Closure, arg: anytype) void {
+    _ = self.invoke(arg);
+}
+
 pub fn callTyped(self: Closure, comptime T: type, arg: T) void {
-    self.call(arg);
+    _ = self.invoke(arg);
 }
 
 pub fn deinit(self: Closure) void {
-    self.pfunc(self.ptr, destroy_arg.ptr);
+    _ = self.pfunc(self.ptr, destroy_arg.ptr);
 }
 
 fn FuncType(any: anytype) type {
@@ -64,11 +72,22 @@ fn FuncType(any: anytype) type {
                 if (@typeInfo(@TypeOf(field)) != .Fn) {
                     err = std.fmt.comptimePrint("{s}.{s} is not a function.", .{ @typeName(T), info.decls[0].name });
                 } else {
-                    ret = @TypeOf(field);
+                    const F = @TypeOf(field);
+                    if (comptime FuncRetType(F) != void and FuncRetType(F) != bool) {
+                        err = std.fmt.comptimePrint("closure function's return type must be 'void' or 'bool' but '{s}'.", .{@typeName(FuncRetType(F))});
+                    } else {
+                        ret = F;
+                    }
                 }
             }
         },
-        .Fn => ret = T,
+        .Fn => {
+            if (comptime FuncRetType(T) != void and FuncRetType(T) != bool) {
+                err = std.fmt.comptimePrint("closure function's return type must be 'void' or 'bool' but '{s}'.", .{@typeName(FuncRetType(T))});
+            } else {
+                ret = T;
+            }
+        },
         else => err = "expect struct or function but got " ++ @typeName(T),
     }
     if (ret == void) @compileError(err) else return ret;
@@ -112,40 +131,60 @@ fn StackClosureCaller(function: anytype, comptime TUpValue: type) type {
     if (has_arg) {
         return t: {
             if (TUpValue == @TypeOf(.{})) break :t struct {
-                pub fn func(_: ?*anyopaque, arg: ?[*]const u8) void {
+                pub fn func(_: ?*anyopaque, arg: ?[*]const u8) bool {
                     if (arg) |p| {
-                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
+                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return false;
                     }
                     const real_arg: *FuncArgType(TFunc) = @ptrCast(@alignCast(@constCast(arg.?)));
-                    @call(.auto, function, .{real_arg.*});
+                    if (comptime FuncRetType(TFunc) == void) {
+                        @call(.auto, function, .{real_arg.*});
+                        return true;
+                    } else {
+                        return @call(.auto, function, .{real_arg.*});
+                    }
                 }
             } else break :t struct {
-                pub fn func(p_upvalue: ?*anyopaque, arg: ?[*]const u8) void {
+                pub fn func(p_upvalue: ?*anyopaque, arg: ?[*]const u8) bool {
                     if (arg) |p| {
-                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
+                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return false;
                     }
                     const real_arg: *FuncArgType(TFunc) = @ptrCast(@alignCast(@constCast(arg.?)));
                     const upvalue: *TUpValue = @ptrCast(@alignCast(@constCast(p_upvalue.?)));
-                    @call(.auto, function, .{real_arg.*} ++ upvalue.*);
+                    if (comptime FuncRetType(TFunc) == void) {
+                        @call(.auto, function, .{real_arg.*} ++ upvalue.*);
+                        return true;
+                    } else {
+                        return @call(.auto, function, .{real_arg.*} ++ upvalue.*);
+                    }
                 }
             };
         };
     } else {
         return t: {
             if (TUpValue == @TypeOf(.{})) break :t struct {
-                pub fn func(_: ?*anyopaque, arg: ?[*]const u8) void {
+                pub fn func(_: ?*anyopaque, arg: ?[*]const u8) bool {
                     if (arg) |p| {
-                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
+                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return false;
                     }
-                    @call(.auto, function, .{});
+                    if (comptime FuncRetType(TFunc) == void) {
+                        @call(.auto, function, .{});
+                        return true;
+                    } else {
+                        return @call(.auto, function, .{});
+                    }
                 }
             } else break :t struct {
-                pub fn func(p_upvalue: ?*anyopaque, arg: ?[*]const u8) void {
+                pub fn func(p_upvalue: ?*anyopaque, arg: ?[*]const u8) bool {
                     if (arg) |p| {
-                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return;
+                        if (@intFromPtr(p) == @intFromPtr(destroy_arg.ptr)) return false;
                     }
                     const upvalue: *TUpValue = @ptrCast(@alignCast(p_upvalue.?));
-                    @call(.auto, function, upvalue.*);
+                    if (comptime FuncRetType(TFunc) == void) {
+                        @call(.auto, function, upvalue.*);
+                        return true;
+                    } else {
+                        return @call(.auto, function, upvalue.*);
+                    }
                 }
             };
         };
@@ -153,12 +192,23 @@ fn StackClosureCaller(function: anytype, comptime TUpValue: type) type {
 }
 
 fn FuncArgType(comptime TFunc: type) type {
-    const info = @typeInfo(TFunc);
-    if (info != .Fn) @compileError("pfunc is not a .Fn");
+    comptime {
+        const info = @typeInfo(TFunc);
+        if (info != .Fn) @compileError("pfunc is not a .Fn");
 
-    if (info.Fn.params.len == 0) return void;
-    const T0 = info.Fn.params[0].type.?;
-    return if (isTypeTuple(T0)) T0 else void;
+        if (info.Fn.params.len == 0) return void;
+        const T0 = info.Fn.params[0].type.?;
+        return if (isTypeTuple(T0)) T0 else void;
+    }
+}
+
+fn FuncRetType(comptime TFunc: type) type {
+    comptime {
+        const info = @typeInfo(TFunc);
+        if (info != .Fn) @compileError("pfunc is not a .Fn");
+
+        return if (info.Fn.return_type) |T| T else void;
+    }
 }
 
 fn FuncUpValueTuple(comptime TFunc: type) type {
@@ -207,30 +257,50 @@ fn Invoker(comptime Caller: type) type {
     if (has_arg) {
         if (@hasField(Caller, "upvalue")) {
             return struct {
-                pub fn invoke(self: *Caller, arg: ?[*]const u8) void {
+                pub fn eval(self: *Caller, arg: ?[*]const u8) bool {
                     const real_arg: *FuncArgType(TFunc) = @ptrCast(@alignCast(@constCast(arg.?)));
-                    @call(.auto, self.func, .{real_arg.*} ++ self.upvalue);
+                    if (comptime FuncRetType(TFunc) == void) {
+                        @call(.auto, self.func, .{real_arg.*} ++ self.upvalue);
+                        return true;
+                    } else {
+                        return @call(.auto, self.func, .{real_arg.*} ++ self.upvalue);
+                    }
                 }
             };
         } else {
             return struct {
-                pub fn invoke(self: *Caller, arg: ?[*]const u8) void {
+                pub fn eval(self: *Caller, arg: ?[*]const u8) bool {
                     const real_arg: *FuncArgType(TFunc) = @ptrCast(@alignCast(@constCast(arg.?)));
-                    @call(.auto, self.func, .{real_arg.*});
+                    if (comptime FuncRetType(TFunc) == void) {
+                        @call(.auto, self.func, .{real_arg.*});
+                        return true;
+                    } else {
+                        return @call(.auto, self.func, .{real_arg.*});
+                    }
                 }
             };
         }
     } else {
         if (@hasField(Caller, "upvalue")) {
             return struct {
-                pub fn invoke(self: *Caller, _: ?[*]const u8) void {
-                    @call(.auto, self.func, self.upvalue);
+                pub fn eval(self: *Caller, _: ?[*]const u8) bool {
+                    if (comptime FuncRetType(TFunc) == void) {
+                        @call(.auto, self.func, self.upvalue);
+                        return true;
+                    } else {
+                        return @call(.auto, self.func, self.upvalue);
+                    }
                 }
             };
         } else {
             return struct {
-                pub fn invoke(self: *Caller, _: ?[*]const u8) void {
-                    @call(.auto, self.func, .{});
+                pub fn eval(self: *Caller, _: ?[*]const u8) bool {
+                    if (comptime FuncRetType(TFunc) == void) {
+                        @call(.auto, self.func, .{});
+                        return true;
+                    } else {
+                        return @call(.auto, self.func, .{});
+                    }
                 }
             };
         }
@@ -245,8 +315,8 @@ fn ClosureType(comptime TFunc: type, comptime TUpValue: type) type {
                 return .{ .func = f };
             }
 
-            pub fn invoke(self: *@This(), arg: ?[*]const u8) void {
-                Invoker(@This()).invoke(self, arg);
+            pub fn eval(self: *@This(), arg: ?[*]const u8) bool {
+                return Invoker(@This()).eval(self, arg);
             }
         } else break :t struct {
             func: *const TFunc,
@@ -255,8 +325,8 @@ fn ClosureType(comptime TFunc: type, comptime TUpValue: type) type {
             pub fn init(f: *const TFunc, upvalue: TUpValue) @This() {
                 return .{ .func = f, .upvalue = upvalue };
             }
-            pub fn invoke(self: *@This(), arg: ?[*]const u8) void {
-                Invoker(@This()).invoke(self, arg);
+            pub fn eval(self: *@This(), arg: ?[*]const u8) bool {
+                return Invoker(@This()).eval(self, arg);
             }
         };
     };
@@ -279,17 +349,17 @@ fn ClosureType(comptime TFunc: type, comptime TUpValue: type) type {
                 upvalue[i] = args[i];
             }
             self.* = .{ .caller = Caller.init(pfunc, upvalue), .deallocator = ally };
-            return .{ .ptr = self, .pfunc = @ptrCast(&invoke) };
+            return .{ .ptr = self, .pfunc = @ptrCast(&eval) };
         }
 
-        fn invoke(self: *Self, arg: ?[*]const u8) void {
+        fn eval(self: *Self, arg: ?[*]const u8) bool {
             if (arg) |a| {
                 if (@intFromPtr(a) == @intFromPtr(destroy_arg.ptr)) {
                     self.deallocator.destroy(self);
-                    return;
+                    return false;
                 }
             }
-            self.caller.invoke(arg);
+            return self.caller.eval(arg);
         }
     };
 }
