@@ -26,7 +26,7 @@ pub fn make(func_or_struct: anytype, p_upvalue: anytype) Closure {
     if (@TypeOf(p_upvalue) == @TypeOf(null) or @TypeOf(p_upvalue) == @TypeOf(.{})) {
         return .{ .ptr = null, .pfunc = StackClosureCaller(funcValue(func_or_struct), @TypeOf(.{})).func };
     } else {
-        if (@typeInfo(@TypeOf(p_upvalue)) != .Pointer) @compileError("upvalue for make() must be pointer.");
+        if (@typeInfo(@TypeOf(p_upvalue)) != .pointer) @compileError("upvalue for make() must be pointer.");
         return .{ .ptr = @ptrCast(@constCast(p_upvalue)), .pfunc = StackClosureCaller(funcValue(func_or_struct), @TypeOf(p_upvalue.*)).func };
     }
 }
@@ -64,12 +64,12 @@ fn FuncType(any: anytype) type {
     comptime var err: []const u8 = "";
     const typeinfo = if (T == type) @typeInfo(any) else @typeInfo(T);
     switch (typeinfo) {
-        .Struct => |info| {
+        .@"struct" => |info| {
             if (info.decls.len != 1) {
                 err = "expect struct with just one function.";
             } else {
                 const field = @field(any, info.decls[0].name);
-                if (@typeInfo(@TypeOf(field)) != .Fn) {
+                if (@typeInfo(@TypeOf(field)) != .@"fn") {
                     err = std.fmt.comptimePrint("{s}.{s} is not a function.", .{ @typeName(T), info.decls[0].name });
                 } else {
                     const F = @TypeOf(field);
@@ -81,7 +81,7 @@ fn FuncType(any: anytype) type {
                 }
             }
         },
-        .Fn => {
+        .@"fn" => {
             if (comptime FuncRetType(T) != void and FuncRetType(T) != bool) {
                 err = std.fmt.comptimePrint("closure function's return type must be 'void' or 'bool' but '{s}'.", .{@typeName(FuncRetType(T))});
             } else {
@@ -96,8 +96,8 @@ fn FuncType(any: anytype) type {
 fn funcValue(any: anytype) FuncType(any) {
     comptime {
         switch (@typeInfo(@TypeOf(any))) {
-            .Fn => return any,
-            .Type => return @field(any, @typeInfo(any).Struct.decls[0].name),
+            .@"fn" => return any,
+            .type => return @field(any, @typeInfo(any).@"struct".decls[0].name),
             else => {},
         }
     }
@@ -105,7 +105,7 @@ fn funcValue(any: anytype) FuncType(any) {
 
 inline fn isTypeTuple(comptime T: type) bool {
     switch (@typeInfo(T)) {
-        .Struct => |info| {
+        .@"struct" => |info| {
             if (info.is_tuple == false) return false;
             inline for (info.fields) |field| {
                 if (@TypeOf(field.type) != type) return false;
@@ -119,7 +119,7 @@ inline fn isTypeTuple(comptime T: type) bool {
 inline fn isComptimeTypeTuple(comptime T: type) bool {
     if (isTypeTuple(T) == false) return false;
     if (T == @TypeOf(.{})) return false;
-    inline for (@typeInfo(T).Struct.fields) |field| {
+    inline for (@typeInfo(T).@"struct".fields) |field| {
         if (field.is_comptime) return true;
     }
     return false;
@@ -194,10 +194,10 @@ fn StackClosureCaller(function: anytype, comptime TUpValue: type) type {
 fn FuncArgType(comptime TFunc: type) type {
     comptime {
         const info = @typeInfo(TFunc);
-        if (info != .Fn) @compileError("pfunc is not a .Fn");
+        if (info != .@"fn") @compileError("pfunc is not a .@\"fn\"");
 
-        if (info.Fn.params.len == 0) return void;
-        const T0 = info.Fn.params[0].type.?;
+        if (info.@"fn".params.len == 0) return void;
+        const T0 = info.@"fn".params[0].type.?;
         return if (isTypeTuple(T0)) T0 else void;
     }
 }
@@ -205,19 +205,19 @@ fn FuncArgType(comptime TFunc: type) type {
 fn FuncRetType(comptime TFunc: type) type {
     comptime {
         const info = @typeInfo(TFunc);
-        if (info != .Fn) @compileError("pfunc is not a .Fn");
+        if (info != .@"fn") @compileError("pfunc is not a .@\"fn\"");
 
-        return if (info.Fn.return_type) |T| T else void;
+        return if (info.@"fn".return_type) |T| T else void;
     }
 }
 
 fn FuncUpValueTuple(comptime TFunc: type) type {
     const info = @typeInfo(TFunc);
-    if (info != .Fn) @compileError("pfunc is not a .Fn");
-    const len = info.Fn.params.len;
+    if (info != .@"fn") @compileError("pfunc is not a .@\"fn\"");
+    const len = info.@"fn".params.len;
     if (len == 0) return @TypeOf(.{});
 
-    const has_arg = isTypeTuple(info.Fn.params[0].type.?);
+    const has_arg = isTypeTuple(info.@"fn".params[0].type.?);
     if (has_arg and len == 1) {
         return @TypeOf(.{});
     }
@@ -225,7 +225,7 @@ fn FuncUpValueTuple(comptime TFunc: type) type {
     const reallen = if (has_arg) len - 1 else len;
 
     comptime var fields: [reallen]StructField = undefined;
-    inline for (info.Fn.params[start..], 0..) |p, i| {
+    inline for (info.@"fn".params[start..], 0..) |p, i| {
         fields[i] = .{
             .name = std.fmt.comptimePrint("{}", .{i}),
             .type = p.type.?,
@@ -235,7 +235,7 @@ fn FuncUpValueTuple(comptime TFunc: type) type {
         };
     }
 
-    return @Type(.{ .Struct = .{
+    return @Type(.{ .@"struct" = .{
         .layout = .auto,
         .fields = fields[0..reallen],
         .decls = &.{},
@@ -332,7 +332,7 @@ fn ClosureType(comptime TFunc: type, comptime TUpValue: type) type {
     };
 
     const upvalue_len = switch (@typeInfo(TUpValue)) {
-        .Struct => |info| info.fields.len,
+        .@"struct" => |info| info.fields.len,
         else => 0,
     };
 
