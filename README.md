@@ -44,7 +44,7 @@ Now we can use closure in zig ;)
             up.pval.* = new_val;
         }
     });
-    clo.call(.{@as(i32, 400)});
+    clo.call(&.{@as(i32, 400)});
     try t.expect(val == 400);
 ```
 More examples in source code: [here](src/root.zig) 
