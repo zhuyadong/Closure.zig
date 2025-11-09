@@ -6,8 +6,12 @@ const destroy_arg = "destroy me";
 
 const Closure = @This();
 
-ptr: *anyopaque,
-pfunc: *const fn (Closure, *anyopaque, ?*anyopaque) void,
+pub const ClosureError = error{
+    Deinitialized,
+};
+
+ptr: ?*anyopaque,
+pfunc: *const fn (*Closure, *anyopaque, ?*anyopaque) void,
 
 // declare closure type for code reader, ex: Of(fn (n: i32) void)
 pub fn Of(_: anytype) type {
@@ -15,9 +19,9 @@ pub fn Of(_: anytype) type {
 }
 
 pub fn new(allocator: std.mem.Allocator, up: anytype, Func: type) Closure {
-    const T = OfHeap(@TypeOf(up), Func);
+    const T = OfHeap(@TypeOf(up.*), Func);
     const data: *T = allocator.create(T) catch @panic("allocation failed");
-    data.upValues = up;
+    data.upValues = up.*;
     data.allocator = allocator;
     return .{
         .ptr = @ptrCast(data),
@@ -26,23 +30,28 @@ pub fn new(allocator: std.mem.Allocator, up: anytype, Func: type) Closure {
 }
 
 pub fn make(up: anytype, Func: type) Closure {
-    const T = OfStack(@TypeOf(up), Func);
+    const T = OfStack(@TypeOf(up.*), Func);
     return .{
-        .ptr = @ptrCast(@constCast(&up)),
+        .ptr = @ptrCast(@constCast(up)),
         .pfunc = &T.call,
     };
 }
 
-pub fn deinit(self: Closure) void {
-    self.pfunc(self, @ptrCast(@constCast(destroy_arg.ptr)), null);
+pub fn deinit(self: *Closure) void {
+    if (self.ptr) |ptr| {
+        self.pfunc(self, ptr, @ptrCast(@constCast(destroy_arg.ptr)));
+    }
 }
 
-pub fn call(self: Closure, args: anytype) void {
+pub fn call(self: *Closure, args: anytype) !void {
+    if (self.ptr == null) {
+        return error.Deinitialized;
+    }
     if (comptime @TypeOf(args) == @TypeOf(.{})) {
-        self.pfunc(self, self.ptr, null);
+        self.pfunc(self, self.ptr.?, null);
     } else {
         var fixargs = removeComptime(args.*);
-        self.pfunc(self, self.ptr, @ptrCast(&fixargs));
+        self.pfunc(self, self.ptr.?, @ptrCast(&fixargs));
     }
 }
 
@@ -51,18 +60,23 @@ fn OfHeap(UpValues: type, Func: type) type {
     return struct {
         allocator: std.mem.Allocator,
         upValues: UpValues,
-        pub fn call(clo: Closure, pself: *const anyopaque, parg: ?*const anyopaque) void {
-            if (@intFromPtr(pself) == @intFromPtr(destroy_arg.ptr)) {
-                const self: *@This() = @ptrCast(@alignCast(clo.ptr));
-                self.allocator.destroy(self);
-                return;
-            }
+        pub fn call(clo: *Closure, pself: *const anyopaque, parg: ?*const anyopaque) void {
             const self: *@This() = @ptrCast(@alignCast(@constCast(pself)));
+            if (parg) |arg| {
+                if (@intFromPtr(arg) == @intFromPtr(destroy_arg.ptr)) {
+                    if (comptime @hasDecl(Func, "deinit")) {
+                        Func.deinit(&self.upValues);
+                    }
+                    self.allocator.destroy(self);
+                    clo.ptr = null;
+                    return;
+                }
+            }
             if (comptime ArgType == @TypeOf(.{})) {
-                Func.call(self.upValues);
+                Func.call(&self.upValues);
             } else {
                 const real_arg: *ArgType = @ptrCast(@alignCast(@constCast(parg.?)));
-                @call(.auto, Func.call, .{self.upValues} ++ real_arg.*);
+                @call(.auto, Func.call, .{&self.upValues} ++ real_arg.*);
             }
         }
     };
@@ -71,16 +85,23 @@ fn OfHeap(UpValues: type, Func: type) type {
 fn OfStack(UpValues: type, Func: type) type {
     const ArgType = FuncArgTuple(Func);
     return struct {
-        pub fn call(_: Closure, upValues: *const anyopaque, parg: ?*const anyopaque) void {
-            if (@intFromPtr(upValues) != @intFromPtr(destroy_arg.ptr)) {
-                if (comptime ArgType == @TypeOf(.{})) {
-                    const args: *UpValues = @ptrCast(@alignCast(@constCast(upValues)));
-                    Func.call(args);
-                } else {
-                    const args: *UpValues = @ptrCast(@alignCast(@constCast(upValues)));
-                    const real_arg: *ArgType = @ptrCast(@alignCast(@constCast(parg.?)));
-                    @call(.auto, Func.call, .{args.*} ++ real_arg.*);
+        pub fn call(clo: *Closure, upValues: *const anyopaque, parg: ?*const anyopaque) void {
+            const args: *UpValues = @ptrCast(@alignCast(@constCast(upValues)));
+            if (parg) |arg| {
+                if (@intFromPtr(arg) == @intFromPtr(destroy_arg.ptr)) {
+                    if (comptime @hasDecl(Func, "deinit")) {
+                        Func.deinit(args);
+                    }
+                    clo.ptr = null;
+                    return;
                 }
+            }
+
+            if (comptime ArgType == @TypeOf(.{})) {
+                Func.call(args);
+            } else {
+                const real_arg: *ArgType = @ptrCast(@alignCast(@constCast(parg.?)));
+                @call(.auto, Func.call, .{args} ++ real_arg.*);
             }
         }
     };
@@ -157,12 +178,12 @@ test "Closure" {
 
     // no arg closure
     var val: i32 = 100;
-    var clo = make(.{ .pval = &val }, struct {
+    var clo = make(&.{ .pval = &val }, struct {
         pub fn call(up: anytype) void {
             up.pval.* = 400;
         }
     });
-    clo.call(.{});
+    try clo.call(.{});
     try t.expect(val == 400);
 
     // closure with args
@@ -175,23 +196,32 @@ test "Closure" {
     // stack clsure
     // decalre type make reader & editor happy
     var clo2: Closure.Of(fn (new_age: i32, new_name: []const u8) void) = undefined;
-    clo2 = make(.{ .data = &data }, struct {
+    clo2 = make(&.{ .data = &data }, struct {
         pub fn call(up: anytype, new_age: i32, new_name: []const u8) void {
             up.data.* = .{ .age = new_age, .name = new_name };
         }
     });
-    clo2.call(&.{ @as(i32, 20), @as([]const u8, "changed") });
+    try clo2.call(&.{ @as(i32, 20), @as([]const u8, "changed") });
     try t.expect(data.age == 20);
     try t.expectEqualStrings(data.name, "changed");
 
     // heap closure
-    clo2 = new(t.allocator, .{ .data = &data }, struct {
+    clo2 = new(t.allocator, &.{ .data = &data }, struct {
         pub fn call(up: anytype, new_age: i32, new_name: []const u8) void {
             up.data.* = .{ .age = new_age, .name = new_name };
         }
+        pub fn deinit(up: anytype) void {
+            up.data.* = .{ .age = 0, .name = "deinitialized" };
+        }
     });
-    defer clo2.deinit();
-    clo2.call(&.{ @as(i32, 80), @as([]const u8, "hello") });
+    try clo2.call(&.{ @as(i32, 80), @as([]const u8, "hello") });
     try t.expect(data.age == 80);
     try t.expectEqualStrings(data.name, "hello");
+
+    // test null pointer check
+    clo2.deinit();
+    try t.expect(clo2.ptr == null);
+    try t.expectEqualStrings(data.name, "deinitialized");
+    const result = clo2.call(&.{ @as(i32, 100), @as([]const u8, "test") });
+    try t.expectError(error.Deinitialized, result);
 }
