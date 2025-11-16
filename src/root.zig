@@ -6,7 +6,7 @@ const destroy_arg = "destroy me";
 
 const Closure = @This();
 
-pub const ClosureError = error{
+pub const Error = error{
     Deinitialized,
 };
 
@@ -18,9 +18,9 @@ pub fn Of(_: anytype) type {
     return Closure;
 }
 
-pub fn new(allocator: std.mem.Allocator, up: anytype, Func: type) Closure {
+pub fn new(allocator: std.mem.Allocator, up: anytype, Func: type) std.mem.Allocator.Error!Closure {
     const T = OfHeap(@TypeOf(up.*), Func);
-    const data: *T = allocator.create(T) catch @panic("allocation failed");
+    const data: *T = try allocator.create(T);
     data.upValues = up.*;
     data.allocator = allocator;
     return .{
@@ -43,9 +43,9 @@ pub fn deinit(self: *Closure) void {
     }
 }
 
-pub fn call(self: *Closure, args: anytype) !void {
+pub fn call(self: *Closure, args: anytype) Error!void {
     if (self.ptr == null) {
-        return error.Deinitialized;
+        return Error.Deinitialized;
     }
     if (comptime @TypeOf(args) == @TypeOf(.{})) {
         self.pfunc(self, self.ptr.?, null);
@@ -206,7 +206,7 @@ test "Closure" {
     try t.expectEqualStrings(data.name, "changed");
 
     // heap closure
-    clo2 = new(t.allocator, &.{ .data = &data }, struct {
+    clo2 = try new(t.allocator, &.{ .data = &data }, struct {
         pub fn call(up: anytype, new_age: i32, new_name: []const u8) void {
             up.data.* = .{ .age = new_age, .name = new_name };
         }

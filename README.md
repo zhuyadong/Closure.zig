@@ -58,7 +58,7 @@ You can define an optional `deinit` function in your Func struct. It will be cal
     };
     var data: Data = .{ .age = 10, .name = "default" };
     
-    var clo = Closure.new(t.allocator, &.{ .data = &data }, struct {
+    var clo = try Closure.new(t.allocator, &.{ .data = &data }, struct {
         pub fn call(up: anytype, new_age: i32, new_name: []const u8) void {
             up.data.* = .{ .age = new_age, .name = new_name };
         }
@@ -76,7 +76,7 @@ You can define an optional `deinit` function in your Func struct. It will be cal
 The `call` method returns `!void` and will return `error.Deinitialized` if the closure has already been deinitialized.
 
 ```zig
-    var clo = Closure.new(t.allocator, &.{ .data = &data }, struct {
+    var clo = try Closure.new(t.allocator, &.{ .data = &data }, struct {
         pub fn call(up: anytype) void {
             // ...
         }
