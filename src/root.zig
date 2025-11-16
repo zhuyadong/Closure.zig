@@ -11,7 +11,7 @@ pub const Error = error{
 };
 
 ptr: ?*anyopaque,
-pfunc: *const fn (*Closure, *anyopaque, ?*anyopaque) void,
+pfunc: *const fn (*Closure, *anyopaque, ?*anyopaque) anyerror!void,
 
 // declare closure type for code reader, ex: Of(fn (n: i32) void)
 pub fn Of(_: anytype) type {
@@ -39,19 +39,19 @@ pub fn make(up: anytype, Func: type) Closure {
 
 pub fn deinit(self: *Closure) void {
     if (self.ptr) |ptr| {
-        self.pfunc(self, ptr, @ptrCast(@constCast(destroy_arg.ptr)));
+        _ = self.pfunc(self, ptr, @ptrCast(@constCast(destroy_arg.ptr))) catch unreachable;
     }
 }
 
-pub fn call(self: *Closure, args: anytype) Error!void {
+pub fn call(self: *Closure, args: anytype) !void {
     if (self.ptr == null) {
         return Error.Deinitialized;
     }
     if (comptime @TypeOf(args) == @TypeOf(.{})) {
-        self.pfunc(self, self.ptr.?, null);
+        try self.pfunc(self, self.ptr.?, null);
     } else {
         var fixargs = removeComptime(args.*);
-        self.pfunc(self, self.ptr.?, @ptrCast(&fixargs));
+        try self.pfunc(self, self.ptr.?, @ptrCast(&fixargs));
     }
 }
 
@@ -60,7 +60,7 @@ fn OfHeap(UpValues: type, Func: type) type {
     return struct {
         allocator: std.mem.Allocator,
         upValues: UpValues,
-        pub fn call(clo: *Closure, pself: *const anyopaque, parg: ?*const anyopaque) void {
+        pub fn call(clo: *Closure, pself: *const anyopaque, parg: ?*const anyopaque) !void {
             const self: *@This() = @ptrCast(@alignCast(@constCast(pself)));
             if (parg) |arg| {
                 if (@intFromPtr(arg) == @intFromPtr(destroy_arg.ptr)) {
@@ -73,10 +73,10 @@ fn OfHeap(UpValues: type, Func: type) type {
                 }
             }
             if (comptime ArgType == @TypeOf(.{})) {
-                Func.call(&self.upValues);
+                try Func.call(&self.upValues);
             } else {
                 const real_arg: *ArgType = @ptrCast(@alignCast(@constCast(parg.?)));
-                @call(.auto, Func.call, .{&self.upValues} ++ real_arg.*);
+                try @call(.auto, Func.call, .{&self.upValues} ++ real_arg.*);
             }
         }
     };
@@ -85,7 +85,7 @@ fn OfHeap(UpValues: type, Func: type) type {
 fn OfStack(UpValues: type, Func: type) type {
     const ArgType = FuncArgTuple(Func);
     return struct {
-        pub fn call(clo: *Closure, upValues: *const anyopaque, parg: ?*const anyopaque) void {
+        pub fn call(clo: *Closure, upValues: *const anyopaque, parg: ?*const anyopaque) !void {
             const args: *UpValues = @ptrCast(@alignCast(@constCast(upValues)));
             if (parg) |arg| {
                 if (@intFromPtr(arg) == @intFromPtr(destroy_arg.ptr)) {
@@ -98,10 +98,10 @@ fn OfStack(UpValues: type, Func: type) type {
             }
 
             if (comptime ArgType == @TypeOf(.{})) {
-                Func.call(args);
+                try Func.call(args);
             } else {
                 const real_arg: *ArgType = @ptrCast(@alignCast(@constCast(parg.?)));
-                @call(.auto, Func.call, .{args} ++ real_arg.*);
+                try @call(.auto, Func.call, .{args} ++ real_arg.*);
             }
         }
     };
@@ -179,7 +179,7 @@ test "Closure" {
     // no arg closure
     var val: i32 = 100;
     var clo = make(&.{ .pval = &val }, struct {
-        pub fn call(up: anytype) void {
+        pub fn call(up: anytype) !void {
             up.pval.* = 400;
         }
     });
@@ -197,7 +197,7 @@ test "Closure" {
     // decalre type make reader & editor happy
     var clo2: Closure.Of(fn (new_age: i32, new_name: []const u8) void) = undefined;
     clo2 = make(&.{ .data = &data }, struct {
-        pub fn call(up: anytype, new_age: i32, new_name: []const u8) void {
+        pub fn call(up: anytype, new_age: i32, new_name: []const u8) !void {
             up.data.* = .{ .age = new_age, .name = new_name };
         }
     });
@@ -207,7 +207,7 @@ test "Closure" {
 
     // heap closure
     clo2 = try new(t.allocator, &.{ .data = &data }, struct {
-        pub fn call(up: anytype, new_age: i32, new_name: []const u8) void {
+        pub fn call(up: anytype, new_age: i32, new_name: []const u8) !void {
             up.data.* = .{ .age = new_age, .name = new_name };
         }
         pub fn deinit(up: anytype) void {
