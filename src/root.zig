@@ -113,23 +113,13 @@ fn FuncArgTuple(comptime TFunc: type) type {
     const len = info.@"fn".params.len;
     if (len < 2) return @TypeOf(.{});
 
-    comptime var fields: [len - 1]StructField = undefined;
+    const arg_count = len - 1;
+    comptime var field_types: [arg_count]type = undefined;
     inline for (info.@"fn".params[1..], 0..) |p, i| {
-        fields[i] = .{
-            .name = std.fmt.comptimePrint("{}", .{i}),
-            .type = p.type.?,
-            .default_value_ptr = null,
-            .is_comptime = false,
-            .alignment = 0,
-        };
+        field_types[i] = p.type.?;
     }
 
-    return @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .fields = fields[0 .. len - 1],
-        .decls = &.{},
-        .is_tuple = true,
-    } });
+    return @Tuple(&field_types);
 }
 
 fn RemoveComptime(comptime T: type) type {
@@ -138,25 +128,13 @@ fn RemoveComptime(comptime T: type) type {
         @compileError("Expected tuple type, got " ++ @typeName(T));
     }
 
-    comptime var fields: [info.@"struct".fields.len]std.builtin.Type.StructField = undefined;
+    const field_count = info.@"struct".fields.len;
+    comptime var field_types: [field_count]type = undefined;
     inline for (info.@"struct".fields, 0..) |field, i| {
-        fields[i] = .{
-            .name = field.name,
-            .type = field.type,
-            .default_value_ptr = null,
-            .is_comptime = false,
-            .alignment = 0,
-        };
+        field_types[i] = field.type;
     }
 
-    return @Type(.{
-        .@"struct" = .{
-            .layout = .auto,
-            .fields = &fields,
-            .decls = &.{},
-            .is_tuple = true,
-        },
-    });
+    return @Tuple(&field_types);
 }
 
 fn removeComptime(tuple: anytype) RemoveComptime(@TypeOf(tuple)) {
